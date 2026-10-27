@@ -1,0 +1,18 @@
+name = "trip-countdown-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# The app's address, so the browser is allowed to call this Worker.
+[vars]
+ALLOWED_ORIGINS = "https://trips.slightlygood.app"
+ALLOW_LOCALHOST = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trip-countdown"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Snapshot forecasts once a day at 05:17 UTC.
+[triggers]
+crons = ["17 5 * * *"]
