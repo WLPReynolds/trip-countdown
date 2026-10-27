@@ -6,13 +6,14 @@ import { todayIn, eachDay, daysBetween, addDays, formatRange, formatDate, device
 import * as W from './lib/weather.js';
 import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
+import { iosInstallState, hintBannerDue } from './lib/install.js';
 
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.1.1';
 
-// Set this to the Worker's address once it's deployed, so nobody has to type it.
-const DEFAULT_API_BASE = '';
+// The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
+const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';
 const HOME_TZ = deviceTimeZone();
-const LS = { key: 'tc.key', base: 'tc.base', trips: 'tc.trips', http: 'tc.http.' };
+const LS = { key: 'tc.key', base: 'tc.base', trips: 'tc.trips', http: 'tc.http.', installHint: 'tc.installHintDismissed' };
 const TTL = { forecast: 3 * 3600e3, climate: 30 * 86400e3, seasonal: 12 * 3600e3, marine: 6 * 3600e3, marineHistory: 30 * 86400e3, geocode: 30 * 86400e3 };
 
 // ---------------------------------------------------------------- state
@@ -259,7 +260,13 @@ function bar(html) { $('#bar').innerHTML = html; }
 function banner() {
   const s = settings();
   const el = $('#banner');
-  if (!s.key || !s.base) {
+  const installFirst = iosNeedsInstall();
+  if (installFirst && (!s.key || hintBannerDue(localStorage.getItem(LS.installHint)))) {
+    el.innerHTML = `<div class="banner install">${!s.key
+      ? 'Add Trips to your Home Screen first, then paste the setup key in the Home Screen app. It keeps its own settings, separate from Safari.'
+      : 'Add Trips to your Home Screen to keep it handy. It keeps its own settings, so you’ll paste the setup key there once more.'}
+      <span class="banner-actions"><button class="btn" data-action="install-help">Show me how</button>${s.key ? '<button class="btn secondary" data-action="install-later">Not now</button>' : ''}</span></div>`;
+  } else if (!s.key || !s.base) {
     el.innerHTML = `<p class="banner">To see your trips, add the setup key in Settings. <button class="btn secondary" data-action="settings">Open Settings</button></p>`;
   } else if (state.error instanceof ApiError) {
     const offline = state.error.kind === 'offline';
@@ -305,6 +312,7 @@ function tripCard(trip, lead) {
 
 function renderHome() {
   bar(`<h1>Trips</h1>
+    ${installPrompt ? '<button class="btn secondary" data-action="install">Install</button>' : ''}
     <button class="icon-btn" data-action="settings" aria-label="Settings">${ICONS.gear}</button>
     <button class="icon-btn add" data-action="add" aria-label="Add a trip">${ICONS.plus}</button>`);
   const trips = sortTrips(state.trips, new Date(), HOME_TZ);
@@ -314,7 +322,7 @@ function renderHome() {
       <div class="envelope t-tropical"><div class="card" aria-hidden="true">✈️</div></div>
       <h2>Where to next?</h2>
       <p>${ready ? 'Add a trip and it’ll appear on both phones, with a countdown, a map and the weather.' : 'Once the setup key is in Settings, your shared trips will appear here.'}</p>
-      ${ready ? '<button class="btn" data-action="add">Add a trip</button>' : '<button class="btn" data-action="settings">Open Settings</button>'}
+      ${ready ? '<button class="btn" data-action="add">Add a trip</button>' : iosNeedsInstall() ? '<button class="btn" data-action="install-help">Show me how to install</button>' : '<button class="btn" data-action="settings">Open Settings</button>'}
     </section>`;
     return;
   }
@@ -633,7 +641,8 @@ function openSettings() {
     <label for="key">Setup key <span class="hint">(the shared key; paste it once on each phone)</span></label>
     <textarea id="key" name="key" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste setup key">${h(s.key)}</textarea>
     <p style="margin:-2px 0 14px"><button type="button" class="btn secondary" data-paste>Paste from clipboard</button></p>
-    <label>Server address<input name="base" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://trip-countdown-api.example.workers.dev" value="${h(s.base)}"></label>
+    <details class="advanced"${s.base && s.base !== DEFAULT_API_BASE ? ' open' : ''}><summary>Server address</summary>
+      <label><span class="sr-only">Server address</span><input name="base" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="${h(DEFAULT_API_BASE)}" value="${h(s.base)}"></label></details>
     <p class="errors" data-msg role="status"></p>
     <div class="actions"><button type="button" class="btn secondary" data-close>Close</button><button class="btn" type="submit">Save and connect</button></div>
     <p class="version">Version ${APP_VERSION}</p>
@@ -670,6 +679,9 @@ document.addEventListener('click', (e) => {
   else if (act === 'edit') tripForm(state.trips.find((t) => t.id === a.dataset.id));
   else if (act === 'delete') confirmDelete(a.dataset.id);
   else if (act === 'update' && swWaiting) swWaiting.postMessage('skip-waiting');
+  else if (act === 'install-help') openInstallHelp();
+  else if (act === 'install-later') { localStorage.setItem(LS.installHint, String(Date.now())); banner(); }
+  else if (act === 'install' && installPrompt) { const p = installPrompt; installPrompt = null; p.prompt(); p.userChoice.finally(render); }
 });
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync({ quiet: true }); });
@@ -677,6 +689,40 @@ setInterval(() => { if (document.visibilityState === 'visible') sync({ quiet: tr
 
 // Time zone suggestions for the flight fields.
 try { $('#tz-list').innerHTML = Intl.supportedValuesOf('timeZone').map((z) => `<option value="${z}">`).join(''); } catch { /* older browsers */ }
+
+// ---------------------------------------------------------------- installing
+
+function iosNeedsInstall() {
+  return iosInstallState({
+    userAgent: navigator.userAgent,
+    maxTouchPoints: navigator.maxTouchPoints,
+    standalone: navigator.standalone,
+    displayModeStandalone: matchMedia('(display-mode: standalone)').matches,
+  }) === 'needs-install';
+}
+
+const SHARE_ICON = '<svg class="share-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>';
+
+function openInstallHelp() {
+  const dlg = $('#dlg-install');
+  dlg.innerHTML = `<form class="sheet" method="dialog">
+    <h2 id="install-title">Install on your iPhone</h2>
+    <ol class="install-steps">
+      <li><span class="n">1</span><span>Tap the <b>Share</b> button ${SHARE_ICON} at the bottom of Safari. Can’t see it? Tap <b>⋯</b> or the <b>three lines (≡)</b> in the address bar, then <b>Share</b>.</span></li>
+      <li><span class="n">2</span><span>Scroll down and tap <b>Add to Home Screen</b>.</span></li>
+      <li><span class="n">3</span><span>Tap <b>Add</b>, then open <b>Trips</b> from your Home Screen.</span></li>
+      <li><span class="n">4</span><span>In the Home Screen app, tap Settings ${ICONS.gear.replace('<svg', '<svg class="share-icon" width="18" height="18" aria-hidden="true"')} and paste the setup key.</span></li>
+    </ol>
+    <p class="hint-text">Use the Home Screen app from then on. It keeps its own settings, separate from Safari, and the iPhone won’t clear them the way it can clear websites you haven’t visited for a while.</p>
+    <p class="hint-text">No Share button? The link may have opened inside another app. Open it in Safari first.</p>
+    <div class="actions"><button class="btn">Got it</button></div>
+  </form>`;
+  dlg.showModal();
+}
+
+// Android and desktop Chrome offer their own install prompt.
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; render(); });
 
 // ---------------------------------------------------------------- service worker
 

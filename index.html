@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.0">
+<meta name="app-version" content="0.1.1">
 <title>Trip countdown</title>
 <meta name="description" content="Countdowns, maps and weather for our upcoming trips.">
 <meta name="theme-color" content="#F1EEFB" media="(prefers-color-scheme: light)">
@@ -275,6 +275,18 @@ textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, monosp
 .toggle input { width: 22px; height: 22px; margin: 0; flex: none; }
 .errors { color: var(--air-red); font-size: 15px; margin: 8px 0 0; padding-left: 18px; }
 .version { color: var(--muted); font-size: 13px; margin-top: 14px; }
+.advanced { margin: 0 0 10px; font-size: 14px; }
+.advanced summary { cursor: pointer; font-weight: 600; color: var(--muted); padding: 6px 0; }
+
+/* ---------- iPhone install guide ---------- */
+.banner.install { display: block; border: 0; background: linear-gradient(150deg, #A6EBFF, #B9ABFF); color: #14104A; font-weight: 600; }
+.banner-actions { display: flex; gap: 8px; margin-top: 10px; }
+.banner-actions .btn { min-height: 40px; padding: 8px 16px; }
+.install-steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 12px; }
+.install-steps li { display: flex; gap: 12px; align-items: flex-start; line-height: 1.5; }
+.install-steps .n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--air-blue); color: #fff; font-weight: 800; font-size: 15px; }
+.share-icon { vertical-align: -3px; color: var(--air-blue); }
+.hint-text { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -291,9 +303,10 @@ textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, monosp
 <dialog id="dlg-trip" aria-labelledby="trip-title"></dialog>
 <dialog id="dlg-settings" aria-labelledby="settings-title"></dialog>
 <dialog id="dlg-confirm" aria-labelledby="confirm-title"></dialog>
+<dialog id="dlg-install" aria-labelledby="install-title"></dialog>
 <datalist id="tz-list"></datalist>
 
 <noscript>This app needs JavaScript turned on.</noscript>
-<script type="module" src="src/app.js?v=0.1.0"></script>
+<script type="module" src="src/app.js?v=0.1.1"></script>
 </body>
 </html>

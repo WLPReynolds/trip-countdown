@@ -38,18 +38,33 @@ npm run bump -- 0.2.0 # a specific version
 
 A test fails if they ever disagree.
 
-## Deploying the Worker
+## Going live
+
+The app is at `https://trips.slightlygood.app` (GitHub Pages, see `CNAME`) and the API at `https://trips-api.slightlygood.app` (a Worker custom domain, see `worker/wrangler.toml`).
+
+### GitHub Pages
+
+1. Repo Settings, Pages: deploy from branch `main`, folder `/ (root)`.
+2. Custom domain: `trips.slightlygood.app`.
+3. Cloudflare DNS: `CNAME trips → wlpreynolds.github.io`, **DNS only** (grey cloud), so GitHub can issue the certificate.
+4. Once the certificate is issued, tick **Enforce HTTPS**.
+
+### Worker, database and setup key
 
 ```sh
 cd worker
-npx wrangler d1 create trip-countdown          # copy the database_id into wrangler.toml
-npx wrangler d1 migrations apply trip-countdown --remote
-npx wrangler secret put SETUP_KEY              # paste a long random key
-npx wrangler deploy
+npx wrangler login
+npx wrangler d1 create trip-countdown                      # paste the database_id it prints into wrangler.toml
+npx wrangler d1 migrations apply trip-countdown --remote   # creates the tables
+openssl rand -base64 32                                    # makes a setup key; keep it somewhere safe
+npx wrangler secret put SETUP_KEY                          # paste the key when asked
+npx wrangler deploy                                        # also creates the trips-api DNS record
 ```
 
-Set `ALLOWED_ORIGINS` in `wrangler.toml` to the app's address. Then put the Worker's address in `DEFAULT_API_BASE` in `src/app.js`, so phones only need the setup key.
+Check it with `curl https://trips-api.slightlygood.app/api/health`.
+
+The setup key is the only thing that protects the trip list. It's stored as an encrypted Worker secret, never in the repo, and phones send it in a request header. To change it, run `wrangler secret put SETUP_KEY` again and paste the new key on each phone.
 
 ## Setting up a phone
 
-Open the app, then Settings. Paste the setup key and save. On iPhone, open it in Safari and use Share, Add to Home Screen.
+On iPhone, open the app in Safari and add it to the Home Screen first (the app shows how). Then open it from the Home Screen, tap Settings, and paste the setup key. The Home Screen app keeps its own settings, separate from Safari.
