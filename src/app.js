@@ -7,8 +7,9 @@ import * as W from './lib/weather.js';
 import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
 import { iosInstallState, hintBannerDue } from './lib/install.js';
+import { followTripDates, flightFromForm } from './lib/form.js';
 
-export const APP_VERSION = '0.1.2';
+export const APP_VERSION = '0.1.3';
 
 // The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
 const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';
@@ -491,7 +492,7 @@ function tripForm(trip) {
         <label>Last day<input type="date" name="endDate" required value="${h(t.endDate)}"></label>
       </div>
     </fieldset>
-    <fieldset><legend>Flights <span class="hint">(optional)</span></legend>
+    <fieldset><legend>Flights <span class="hint">(optional; add a time to include a flight)</span></legend>
       ${flightFields('outbound', 'Flight out departs', t.outbound, HOME_TZ)}
       ${flightFields('return', 'Flight home departs', t.return, t.destination?.timezone || '')}
     </fieldset>
@@ -565,18 +566,28 @@ function wireTripForm(dlg, trip) {
   bindPlace();
 
   const start = form.elements.startDate, end = form.elements.endDate;
-  start.addEventListener('change', () => {
-    end.min = start.value;
-    if (!end.value || end.value < start.value) end.value = addDays(start.value, 7);
-    if (!form.elements.eventDate.value) form.elements.eventDate.value = start.value;
-  });
+  // Flight and event dates follow the trip dates unless someone changes them.
+  let prev = { start: start.value, end: end.value };
+  const follow = () => {
+    const f = form.elements;
+    const r = followTripDates({
+      startDate: start.value, endDate: end.value,
+      outboundDate: f.outboundDate.value, returnDate: f.returnDate.value, eventDate: f.eventDate.value,
+    }, prev);
+    for (const [k, v] of Object.entries(r.values)) f[k].value = v;
+    for (const [k, lim] of Object.entries(r.limits)) Object.assign(f[k], lim);
+    prev = { start: start.value, end: end.value };
+  };
+  start.addEventListener('change', follow);
+  end.addEventListener('change', follow);
+  follow();
   form.elements.hasEvent.addEventListener('change', (e) => { form.querySelector('[data-event]').hidden = !e.target.checked; });
   form.querySelector('[data-close]').addEventListener('click', () => dlg.close());
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = form.elements;
-    const flight = (k) => (f[`${k}Date`].value || f[`${k}Time`].value ? { date: f[`${k}Date`].value, time: f[`${k}Time`].value, tz: f[`${k}Tz`].value.trim() } : null);
+    const flight = (k) => flightFromForm(f[`${k}Date`].value, f[`${k}Time`].value, f[`${k}Tz`].value);
     const input = {
       name: f.name.value,
       destination: chosenPlace || {},
