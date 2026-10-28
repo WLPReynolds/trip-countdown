@@ -7,9 +7,9 @@ import * as W from './lib/weather.js';
 import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
 import { iosInstallState, hintBannerDue } from './lib/install.js';
-import { followTripDates, flightFromForm } from './lib/form.js';
+import { followTripDates, flightFromForm, flightDateOnTap } from './lib/form.js';
 
-export const APP_VERSION = '0.1.3';
+export const APP_VERSION = '0.1.4';
 
 // The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
 const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';
@@ -492,7 +492,7 @@ function tripForm(trip) {
         <label>Last day<input type="date" name="endDate" required value="${h(t.endDate)}"></label>
       </div>
     </fieldset>
-    <fieldset><legend>Flights <span class="hint">(optional; add a time to include a flight)</span></legend>
+    <fieldset><legend>Flights <span class="hint">(optional; a flight needs a time)</span></legend>
       ${flightFields('outbound', 'Flight out departs', t.outbound, HOME_TZ)}
       ${flightFields('return', 'Flight home departs', t.return, t.destination?.timezone || '')}
     </fieldset>
@@ -566,7 +566,7 @@ function wireTripForm(dlg, trip) {
   bindPlace();
 
   const start = form.elements.startDate, end = form.elements.endDate;
-  // Flight and event dates follow the trip dates unless someone changes them.
+  // The event date follows the trip dates; flight dates fill in when tapped (lib/form.js).
   let prev = { start: start.value, end: end.value };
   const follow = () => {
     const f = form.elements;
@@ -581,6 +581,17 @@ function wireTripForm(dlg, trip) {
   start.addEventListener('change', follow);
   end.addEventListener('change', follow);
   follow();
+  // Tapping a flight's date or time starts its date from the trip, before the picker opens.
+  for (const [key, field] of [['outbound', 'outboundDate'], ['return', 'returnDate']]) {
+    const fill = () => {
+      const d = flightDateOnTap(field, { startDate: start.value, endDate: end.value, [field]: form.elements[field].value });
+      if (d) form.elements[field].value = d;
+    };
+    for (const name of [`${key}Date`, `${key}Time`]) {
+      form.elements[name].addEventListener('pointerdown', fill);
+      form.elements[name].addEventListener('focus', fill);
+    }
+  }
   form.elements.hasEvent.addEventListener('change', (e) => { form.querySelector('[data-event]').hidden = !e.target.checked; });
   form.querySelector('[data-close]').addEventListener('click', () => dlg.close());
 

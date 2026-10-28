@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { followTripDates, flightFromForm } from '../src/lib/form.js';
+import { followTripDates, flightFromForm, flightDateOnTap } from '../src/lib/form.js';
 
 const blank = { startDate: '', endDate: '', outboundDate: '', returnDate: '', eventDate: '' };
 
-test('choosing the first day fills in the last day and the flight and event dates', () => {
+test('choosing the first day fills in the last day and the event date, but leaves flights empty', () => {
   const r = followTripDates({ ...blank, startDate: '2027-07-27' }, {});
-  assert.deepEqual(r.values, { endDate: '2027-08-03', outboundDate: '2027-07-27', returnDate: '2027-08-03', eventDate: '2027-07-27' });
+  assert.deepEqual(r.values, { endDate: '2027-08-03', eventDate: '2027-07-27' });
   assert.deepEqual(r.limits.endDate, { min: '2027-07-27' });
   assert.deepEqual(r.limits.eventDate, { min: '2027-07-27', max: '2027-08-03' });
 });
@@ -42,4 +42,18 @@ test('nothing happens until there is a first day', () => {
 test('a flight needs a time; a date on its own is just the default', () => {
   assert.equal(flightFromForm('2027-07-27', '', 'Europe/London'), null);
   assert.deepEqual(flightFromForm('2027-07-27', '06:10', ' Europe/London '), { date: '2027-07-27', time: '06:10', tz: 'Europe/London' });
+});
+
+test('flight dates stay empty when the trip dates change', () => {
+  const values = { startDate: '2027-07-28', endDate: '2027-08-06', outboundDate: '', returnDate: '', eventDate: '2027-07-27' };
+  assert.deepEqual(followTripDates(values, { start: '2027-07-27', end: '2027-08-06' }).values, { eventDate: '2027-07-28' });
+});
+
+test('tapping a flight starts it from the first or last day of the trip', () => {
+  const trip = { startDate: '2027-07-27', endDate: '2027-08-06' };
+  assert.equal(flightDateOnTap('outboundDate', { ...trip, outboundDate: '' }), '2027-07-27');
+  assert.equal(flightDateOnTap('returnDate', { ...trip, returnDate: '' }), '2027-08-06');
+  assert.equal(flightDateOnTap('outboundDate', { ...trip, outboundDate: '2027-07-26' }), '', 'an existing date is kept');
+  assert.equal(flightDateOnTap('outboundDate', { startDate: '', endDate: '' }), '', 'nothing to start from yet');
+  assert.equal(flightDateOnTap('returnDate', { startDate: '2027-07-27', endDate: '' }), '2027-07-27');
 });
