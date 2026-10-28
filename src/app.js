@@ -8,7 +8,7 @@ import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
 import { iosInstallState, hintBannerDue } from './lib/install.js';
 
-export const APP_VERSION = '0.1.1';
+export const APP_VERSION = '0.1.2';
 
 // The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
 const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';

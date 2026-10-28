@@ -15,7 +15,7 @@ ALLOW_LOCALHOST = "false"
 [[d1_databases]]
 binding = "DB"
 database_name = "trip-countdown"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "be3557bf-7f9c-4b2d-9c1e-e4a19fc63b41"
 migrations_dir = "migrations"
 
 # Snapshot forecasts once a day at 05:17 UTC.

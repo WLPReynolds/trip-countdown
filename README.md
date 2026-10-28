@@ -49,7 +49,15 @@ The app is at `https://trips.slightlygood.app` (GitHub Pages, see `CNAME`) and t
 3. Cloudflare DNS: `CNAME trips → wlpreynolds.github.io`, **DNS only** (grey cloud), so GitHub can issue the certificate.
 4. Once the certificate is issued, tick **Enforce HTTPS**.
 
-### Worker, database and setup key
+### Worker, database and setup key: in the Cloudflare dashboard
+
+1. Storage & Databases, D1: the `trip-countdown` database is already created and its ID is in `worker/wrangler.toml`.
+2. In the database's **Console** tab, paste and run `worker/migrations/0001_init.sql`.
+3. Workers & Pages: create a Worker by importing this GitHub repository. Worker name `trip-countdown-api`, root directory `worker`, deploy command `npx wrangler deploy`. It redeploys whenever `main` changes.
+4. Worker Settings, Variables and Secrets: add `SETUP_KEY` as a **Secret**, using a long random key from a password manager.
+5. Open `https://trips-api.slightlygood.app/api/health`; it should show `{"ok":true}`.
+
+### Worker, database and setup key: from the command line instead
 
 ```sh
 cd worker
