@@ -1,0 +1,13 @@
+{
+  "name": "trip-countdown",
+  "version": "0.1.2",
+  "private": true,
+  "description": "Shared holiday countdown PWA with maps and weather, backed by a Cloudflare Worker and D1.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --no-warnings=ExperimentalWarning \"test/**/*.test.js\"",
+    "bump": "node scripts/bump-version.mjs",
+    "serve": "python3 -m http.server 8080"
+  },
+  "engines": { "node": ">=22.13" }
+}

@@ -1,0 +1,23 @@
+name = "trip-countdown-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# The API lives on its own subdomain; Cloudflare creates the DNS record on deploy.
+routes = [
+  { pattern = "trips-api.slightlygood.app", custom_domain = true }
+]
+
+# The app's address, so the browser is allowed to call this Worker.
+[vars]
+ALLOWED_ORIGINS = "https://trips.slightlygood.app"
+ALLOW_LOCALHOST = "false"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trip-countdown"
+database_id = "be3557bf-7f9c-4b2d-9c1e-e4a19fc63b41"
+migrations_dir = "migrations"
+
+# Snapshot forecasts once a day at 05:17 UTC.
+[triggers]
+crons = ["17 5 * * *"]
