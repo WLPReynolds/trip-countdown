@@ -1,6 +1,5 @@
 // Trip form date defaults, kept pure so they can be tested.
-// The event date fills itself in from the first day. Flight dates stay empty
-// until someone taps into the flight, then start from the trip's first or
+// Flight dates stay empty until someone taps into the flight, then start from the trip's first or
 // last day, so the picker opens in the right month and year. Once filled,
 // both follow the trip dates until someone picks a date of their own.
 import { addDays } from './time.js';
@@ -11,12 +10,11 @@ export const DEFAULT_TRIP_DAYS = 7;
 export const FOLLOWS = {
   outboundDate: { follows: 'start', fillEmpty: false },
   returnDate: { follows: 'end', fillEmpty: false },
-  eventDate: { follows: 'start', fillEmpty: true },
 };
 
 /**
  * Work out new values after the trip dates change.
- *   values:  { startDate, endDate, outboundDate, returnDate, eventDate }
+ *   values:  { startDate, endDate, outboundDate, returnDate }
  *   prev:    the start and end dates before this change: { start, end }
  * A filled-in dependent field is updated while it still matches a previous
  * trip date, so a date someone chose stays put. Empty flight dates stay empty.
@@ -38,7 +36,7 @@ export function followTripDates(values, prev = {}) {
   }
   return {
     values: out,
-    limits: start ? { endDate: { min: start }, eventDate: { min: start, max: end || '' } } : {},
+    limits: start ? { endDate: { min: start } } : {},
   };
 }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.4">
+<meta name="app-version" content="0.1.5">
 <title>Trip countdown</title>
 <meta name="description" content="Countdowns, maps and weather for our upcoming trips.">
 <meta name="theme-color" content="#F1EEFB" media="(prefers-color-scheme: light)">
@@ -205,6 +205,32 @@ button { cursor: pointer; }
 .odds svg { width: 64px; height: 64px; flex: none; }
 .odds b { font-size: 20px; }
 
+/* ---------- events carousel ---------- */
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.section-head h3 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 800; font-stretch: 85%; font-variation-settings: 'opsz' 36; }
+.section-head .hint { font-weight: 500; color: var(--muted); font-size: 16px; }
+.btn.small { min-height: 38px; padding: 8px 14px; font-size: 15px; display: inline-flex; align-items: center; gap: 6px; }
+.btn.small svg { width: 16px; height: 16px; }
+.carousel { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; border-radius: var(--radius-card); }
+.carousel::-webkit-scrollbar { display: none; }
+.carousel .slide { flex: 0 0 100%; scroll-snap-align: center; scroll-snap-stop: always; }
+.event.over { filter: grayscale(.7); opacity: .75; }
+.slide-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin: 10px -10px -10px 0; }
+.text-btn.light { color: #F6F3FF; }
+.sheet .actions .text-btn.danger { margin-right: auto; }
+.dots { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+.dots button { border: 0; background: none; padding: 8px 4px; }
+.dots button::before { content: ''; display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: width .2s, background .2s; }
+.dots button[aria-selected="true"]::before { width: 22px; border-radius: 4px; background: var(--ink); }
+.kinds { margin: 4px 0 12px; }
+.kinds legend { font-weight: 600; margin-bottom: 6px; }
+.kind-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; }
+.kind { position: relative; display: grid; justify-items: center; gap: 4px; padding: 8px 4px; border-radius: 14px; background: #1F1A47; color: #F6F3FF; font-size: 12px; font-weight: 600; text-align: center; cursor: pointer; }
+.kind input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.kind .kind-art { width: 44px; height: 44px; }
+.kind:has(input:checked) { box-shadow: 0 0 0 3px var(--air-blue); background: #2E2670; }
+.kind:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+
 .chart { background: var(--surface); border-radius: 16px; padding: 12px 12px 8px; box-shadow: var(--shadow); }
 .chart svg { display: block; width: 100%; height: auto; }
 .chart .hi { stroke: var(--air-red); }
@@ -304,9 +330,10 @@ textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, monosp
 <dialog id="dlg-settings" aria-labelledby="settings-title"></dialog>
 <dialog id="dlg-confirm" aria-labelledby="confirm-title"></dialog>
 <dialog id="dlg-install" aria-labelledby="install-title"></dialog>
+<dialog id="dlg-event" aria-labelledby="event-title"></dialog>
 <datalist id="tz-list"></datalist>
 
 <noscript>This app needs JavaScript turned on.</noscript>
-<script type="module" src="src/app.js?v=0.1.4"></script>
+<script type="module" src="src/app.js?v=0.1.5"></script>
 </body>
 </html>

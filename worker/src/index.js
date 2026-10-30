@@ -97,6 +97,12 @@ export async function handle(request, env) {
   if (id && parts.length === 2 && request.method === 'PUT') {
     const body = await readBody(request);
     if (body.error) return json({ error: body.error }, 400, cors);
+    // A phone still on an older version sends one `event` and no list. Keep the
+    // stored list rather than shrinking it to the one event that phone can see.
+    if (body.value && typeof body.value === 'object' && !Array.isArray(body.value.events)) {
+      const stored = await getTrip(env, id);
+      if (Array.isArray(stored?.events)) { body.value.events = stored.events; delete body.value.event; }
+    }
     const v = validateTrip(body.value);
     if (!v.ok) return json({ error: 'Some trip details need fixing', details: v.errors }, 400, cors);
     const res = await env.DB.prepare('UPDATE trips SET data = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(v.trip), now, id).run();

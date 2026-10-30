@@ -14,7 +14,12 @@ test('a complete trip is valid and comes back normalised', () => {
   assert.equal(trip.destination.name, 'Nerja');
   assert.equal(trip.destination.countryCode, 'ES');
   assert.equal(trip.somethingElse, undefined);
-  assert.deepEqual(trip.event, { name: 'Total solar eclipse', date: '2027-08-02', time: '10:48' });
+  // The fixture uses the older single-event shape; it comes back as a list.
+  assert.equal(trip.event, undefined);
+  assert.equal(trip.events.length, 1);
+  const [ev] = trip.events;
+  assert.deepEqual({ ...ev, id: undefined }, { id: undefined, name: 'Total solar eclipse', date: '2027-08-02', time: '10:48', kind: 'eclipse', cloud: true, source: 'manual' });
+  assert.match(ev.id, /^[\w-]+$/);
 });
 
 test('flights and events are optional', () => {
@@ -22,7 +27,7 @@ test('flights and events are optional', () => {
   assert.ok(ok);
   assert.equal(trip.outbound, null);
   assert.equal(trip.return, null);
-  assert.equal(trip.event, null);
+  assert.deepEqual(trip.events, []);
   // An empty flight object from the form counts as no flight.
   assert.equal(validateTrip({ ...fuengirola(), outbound: { date: '', time: '', tz: 'Europe/London' } }).trip.outbound, null);
 });
@@ -33,14 +38,17 @@ test('bad input is rejected with readable reasons', () => {
   t.destination.lat = 95;
   t.destination.timezone = 'Nowhere/Land';
   t.outbound = { date: '2027-07-27', time: '6am', tz: 'Europe/London' };
-  t.event = { name: '', date: '2027-08-02', time: '10:48' };
+  t.event = undefined;
+  t.events = [{ name: '', date: '2027-08-02', time: '10:48' }, { name: 'Gig', date: 'soon', time: '9pm' }];
   const { ok, errors } = validateTrip(t);
   assert.ok(!ok);
   assert.ok(errors.includes('End date is before the start date'));
   assert.ok(errors.includes('Destination latitude is out of range'));
   assert.ok(errors.includes('Destination time zone is not recognised'));
   assert.ok(errors.includes('Outbound flight time must be HH:MM'));
-  assert.ok(errors.includes('Special event needs a name'));
+  assert.ok(errors.includes('Event 1 needs a name'));
+  assert.ok(errors.includes('Gig: the date is not a valid date'));
+  assert.ok(errors.includes('Gig: the time must be HH:MM'));
   assert.ok(!validateTrip(null).ok);
   assert.ok(!validateTrip({ ...fuengirola(), startDate: '2027-01-01', endDate: '2028-06-01' }).ok);
 });
