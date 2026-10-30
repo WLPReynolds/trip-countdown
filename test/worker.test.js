@@ -77,6 +77,22 @@ describe('shared trip list', () => {
     assert.equal((await call('DELETE', `/api/trips/${id}`)).status, 404);
   });
 
+  test('trips hold a list of events, and an older phone saving a trip keeps them', async () => {
+    const { body: { trip } } = await call('POST', '/api/trips', { body: nerja() });
+    assert.equal(trip.event, undefined);
+    assert.deepEqual(trip.events.map((e) => e.name), ['Total solar eclipse']);
+
+    const events = [...trip.events, { name: 'Feria', date: '2027-07-30' }];
+    const two = (await call('PUT', `/api/trips/${trip.id}`, { body: { ...nerja(), event: undefined, events } })).body.trip;
+    assert.deepEqual(two.events.map((e) => e.name), ['Total solar eclipse', 'Feria']);
+    assert.equal(two.events[0].id, trip.events[0].id, 'event ids survive a save');
+
+    // The old app sends its one event and no list.
+    const old = (await call('PUT', `/api/trips/${trip.id}`, { body: { ...nerja(), name: 'Renamed' } })).body.trip;
+    assert.equal(old.name, 'Renamed');
+    assert.deepEqual(old.events.map((e) => e.name), ['Total solar eclipse', 'Feria']);
+  });
+
   test('ids in the body are ignored; the server owns them', async () => {
     const { body } = await call('POST', '/api/trips', { body: { ...nerja(), id: 'chosen-by-client' } });
     assert.notEqual(body.trip.id, 'chosen-by-client');

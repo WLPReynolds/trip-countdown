@@ -2,14 +2,15 @@
 import { createApi, ApiError } from './lib/api.js';
 import { tripStatus, describeCountdown, countdownTo } from './lib/countdown.js';
 import { validateTrip, sortTrips, themeFor, flagEmoji, tripTitle } from './lib/trip.js';
-import { todayIn, eachDay, daysBetween, addDays, formatRange, formatDate, deviceTimeZone, zonedToUtc } from './lib/time.js';
+import { todayIn, eachDay, daysBetween, addDays, formatRange, formatDate, deviceTimeZone } from './lib/time.js';
 import * as W from './lib/weather.js';
 import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
 import { iosInstallState, hintBannerDue } from './lib/install.js';
 import { followTripDates, flightFromForm, flightDateOnTap } from './lib/form.js';
+import { KINDS, KIND_LABELS, CLOUD_BY_DEFAULT, guessKind, cleanEvent, tripEvents, sortEvents, nextEvent, eventStart, eventOver } from './lib/events.js';
 
-export const APP_VERSION = '0.1.4';
+export const APP_VERSION = '0.1.5';
 
 // The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
 const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';
@@ -107,12 +108,13 @@ function refreshLight() {
 
 // ---------------------------------------------------------------- weather
 
-const weatherKey = (t) => [t.id, t.startDate, t.endDate, t.destination.lat, t.destination.lon, t.event?.date, t.event?.time].join('|');
+const weatherKey = (t) => [t.id, t.startDate, t.endDate, t.destination.lat, t.destination.lon,
+  ...tripEvents(t).filter((e) => e.cloud).map((e) => `${e.date}T${e.time}`).sort()].join('|');
 
 async function loadWeather(trip) {
   const { lat, lon, timezone } = trip.destination;
   const today = todayIn(timezone);
-  const out = { today, days: [], summary: null, sea: null, event: null };
+  const out = { today, days: [], summary: null, sea: null, events: {} }; // events: event id → cloud cover
   if (trip.endDate < today) return out;
   const visibleStart = trip.startDate < today ? today : trip.startDate;
   const days = eachDay(visibleStart, trip.endDate);
@@ -148,20 +150,21 @@ async function loadWeather(trip) {
     } catch { out.sea = null; }
   })());
 
-  // Special event: cloud cover at that hour.
-  if (trip.event && trip.event.date >= today) {
-    const ev = trip.event;
+  // Events with cloud odds: cloud cover at that hour.
+  for (const ev of tripEvents(trip).filter((e) => e.cloud && e.time && e.date >= today)) {
     jobs.push((async () => {
       try {
+        let cloud = null;
         if (W.useEventForecast(ev.date, today)) {
-          out.event = W.cloudForecast(W.mergeHourly([await cachedJson(W.cloudForecastUrl(lat, lon), TTL.forecast)]), ev.date, ev.time);
+          cloud = W.cloudForecast(W.mergeHourly([await cachedJson(W.cloudForecastUrl(lat, lon), TTL.forecast)]), ev.date, ev.time);
         }
-        if (!out.event) {
+        if (!cloud) {
           const windows = W.cloudWindows(ev.date, today);
           const js = await Promise.all(windows.map((w) => cachedJson(W.cloudArchiveUrl(lat, lon, w.start, w.end), TTL.climate)));
-          out.event = W.cloudOdds(W.mergeHourly(js), ev.date, ev.time, windows);
+          cloud = W.cloudOdds(W.mergeHourly(js), ev.date, ev.time, windows);
         }
-      } catch { out.event = null; }
+        if (cloud) out.events[ev.id] = cloud;
+      } catch { /* no odds for this one */ }
     })());
   }
 
@@ -236,11 +239,12 @@ function statusCount(trip, now = new Date()) {
   return `<span class="big">✓</span><span class="unit">Home again</span><span class="small"></span>`;
 }
 
-function eventCount(trip, now = new Date()) {
-  const ev = trip.event;
-  const at = zonedToUtc(ev.date, ev.time, trip.destination.timezone);
-  if (now >= at) return `<span class="big">✓</span><span class="unit">Happened</span><span class="small"></span>`;
-  return countHtml(countdownTo(at, now));
+function eventCount(trip, ev, now = new Date()) {
+  const tz = trip.destination.timezone;
+  if (eventOver(ev, tz, now)) return `<span class="big">✓</span><span class="unit">Happened</span><span class="small"></span>`;
+  const at = eventStart(ev, tz);
+  if (!ev.time && now >= at) return `<span class="big">Today</span><span class="unit"></span><span class="small">All day</span>`;
+  return countHtml(countdownTo(at, now), ev.time ? '' : 'until the day starts');
 }
 
 function tick() {
@@ -248,7 +252,12 @@ function tick() {
   document.querySelectorAll('[data-count]').forEach((el) => {
     const trip = state.trips.find((t) => t.id === el.dataset.count);
     if (!trip) return;
-    const html = el.dataset.kind === 'event' ? eventCount(trip, now) : statusCount(trip, now);
+    let html;
+    if (el.dataset.kind === 'event') {
+      const ev = tripEvents(trip).find((e) => e.id === el.dataset.event);
+      if (!ev) return;
+      html = eventCount(trip, ev, now);
+    } else html = statusCount(trip, now);
     if (el.innerHTML !== html) el.innerHTML = html;
   });
 }
@@ -285,14 +294,13 @@ function weatherLine(trip) {
 }
 
 function eventLine(trip) {
-  const ev = trip.event;
-  if (!ev) return '';
-  const at = zonedToUtc(ev.date, ev.time, trip.destination.timezone);
   const now = new Date();
-  if (now >= at) return '';
+  const { next, more } = nextEvent(tripEvents(trip), trip.destination.timezone, now);
+  if (!next) return '';
+  const at = eventStart(next, trip.destination.timezone);
   const c = countdownTo(at, now);
-  const when = c.phase === 'days' ? `in ${c.days} ${c.days === 1 ? 'day' : 'days'}` : 'today';
-  return `<span>${/eclipse/i.test(ev.name) ? '🌑' : '✨'} ${h(ev.name)} ${when}</span>`;
+  const when = now >= at ? 'today' : c.phase === 'days' ? `in ${c.days} ${c.days === 1 ? 'day' : 'days'}` : 'today';
+  return `<span>${KIND_EMOJI[next.kind] || '✨'} ${h(next.name)} ${when}${more ? ` · +${more} more` : ''}</span>`;
 }
 
 function tripCard(trip, lead) {
@@ -377,12 +385,22 @@ function seaTile(sea) {
     <div class="s">${sea.source === 'forecast' ? 'Forecast for your days' : 'Typical for these dates'}</div></div></div>`;
 }
 
-function orb(name) {
-  if (/eclipse/i.test(name)) {
-    return `<svg class="orb" viewBox="0 0 80 80" aria-hidden="true"><defs><radialGradient id="corona"><stop offset="55%" stop-color="#FFE9A8"/><stop offset="100%" stop-color="#FFE9A8" stop-opacity="0"/></radialGradient></defs>
-      <circle cx="40" cy="40" r="38" fill="url(#corona)"/><circle cx="40" cy="40" r="21" fill="#FFF7D6"/><circle cx="41.5" cy="39" r="21" fill="#120D33"/></svg>`;
-  }
-  return `<svg class="orb" viewBox="0 0 80 80" aria-hidden="true"><path d="M40 6l7 25 25 9-25 9-7 25-7-25-25-9 25-9z" fill="#FFE27A"/></svg>`;
+// Artwork for each kind of event, drawn to sit on the dark event card.
+const ART = {
+  eclipse: '<defs><radialGradient id="corona"><stop offset="55%" stop-color="#FFE9A8"/><stop offset="100%" stop-color="#FFE9A8" stop-opacity="0"/></radialGradient></defs><circle cx="40" cy="40" r="38" fill="url(#corona)"/><circle cx="40" cy="40" r="21" fill="#FFF7D6"/><circle cx="41.5" cy="39" r="21" fill="#120D33"/>',
+  sky: '<mask id="crescent"><rect width="80" height="80" fill="#fff"/><circle cx="48" cy="34" r="21" fill="#000"/></mask><circle cx="36" cy="42" r="24" fill="#FFF7D6" mask="url(#crescent)"/><path d="M62 10l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="#FFE27A"/><circle cx="66" cy="50" r="2.2" fill="#FFE27A"/><circle cx="16" cy="14" r="1.8" fill="#FFE27A"/>',
+  concert: '<path d="M30 56V20l32-7v36" fill="none" stroke="#FFE27A" stroke-width="5" stroke-linejoin="round"/><path d="M30 26l32-7" stroke="#FFE27A" stroke-width="9"/><ellipse cx="23" cy="57" rx="9" ry="7" fill="#FFE27A" transform="rotate(-18 23 57)"/><ellipse cx="55" cy="50" rx="9" ry="7" fill="#FFE27A" transform="rotate(-18 55 50)"/>',
+  festival: '<g stroke-linecap="round" stroke-width="4"><path d="M40 40l0-26M40 40l18-18M40 40l26 0M40 40l18 18M40 40l0 26M40 40l-18 18M40 40l-26 0M40 40l-18-18" stroke="#FFE27A" stroke-dasharray="3 6"/></g><circle cx="40" cy="10" r="3.5" fill="#FF8FB1"/><circle cx="61" cy="19" r="3.5" fill="#8FD3FF"/><circle cx="70" cy="40" r="3.5" fill="#FF8FB1"/><circle cx="61" cy="61" r="3.5" fill="#8FD3FF"/><circle cx="40" cy="70" r="3.5" fill="#FF8FB1"/><circle cx="19" cy="61" r="3.5" fill="#8FD3FF"/><circle cx="10" cy="40" r="3.5" fill="#FF8FB1"/><circle cx="19" cy="19" r="3.5" fill="#8FD3FF"/><circle cx="40" cy="40" r="5" fill="#FFF7D6"/>',
+  sport: '<circle cx="40" cy="40" r="28" fill="#FFF7D6"/><path d="M40 29l10.5 7.6-4 12.4H33.5l-4-12.4z" fill="#120D33"/><path d="M40 29V12M50.5 36.6l15-5M46.5 49l9 13M33.5 49l-9 13M29.5 36.6l-15-5" stroke="#120D33" stroke-width="3"/>',
+  theatre: '<path d="M12 26h56v8a6 6 0 0 0 0 12v8H12v-8a6 6 0 0 0 0-12z" fill="#FFE27A" transform="rotate(-10 40 40)"/><path d="M52 23v34" stroke="#120D33" stroke-width="2.5" stroke-dasharray="4 4" transform="rotate(-10 40 40)"/><path d="M28 34l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7z" fill="#120D33" transform="rotate(-10 40 40)"/>',
+  food: '<path d="M24 12h32c0 18-6 28-16 28S24 30 24 12z" fill="#FF8FB1"/><path d="M26 22h28" stroke="#FFF7D6" stroke-width="2.5" opacity=".7"/><path d="M40 40v22M28 66h24" stroke="#FFF7D6" stroke-width="4.5" stroke-linecap="round"/>',
+  holiday: '<path d="M6 20q34 22 68 0" fill="none" stroke="#FFF7D6" stroke-width="2.5"/><path d="M12 24l6 20 7-17z" fill="#FF8FB1"/><path d="M29 30l5 20 8-19z" fill="#FFE27A"/><path d="M46 31l4 19 8-20z" fill="#8FD3FF"/><path d="M62 27l3 18 7-21z" fill="#FF8FB1"/>',
+  other: '<path d="M40 6l7 25 25 9-25 9-7 25-7-25-25-9 25-9z" fill="#FFE27A"/>',
+};
+const KIND_EMOJI = { eclipse: '🌑', sky: '🌙', concert: '🎵', festival: '🎆', sport: '⚽', theatre: '🎭', food: '🍷', holiday: '🎉', other: '✨' };
+
+function orb(kind, cls = 'orb') {
+  return `<svg class="${cls}" viewBox="0 0 80 80" aria-hidden="true">${ART[kind] || ART.other}</svg>`;
 }
 
 function donut(pct) {
@@ -391,27 +409,61 @@ function donut(pct) {
     <circle cx="32" cy="32" r="${r}" fill="none" stroke="#FFE27A" stroke-width="8" stroke-linecap="round" stroke-dasharray="${((pct / 100) * c).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 32 32)"/></svg>`;
 }
 
-function eventSection(trip) {
-  const ev = trip.event;
-  if (!ev) return '';
-  const w = weatherFor(trip);
-  const cloud = w.data?.event;
-  let odds = '';
-  if (w.status === 'loading') odds = '<div class="odds">Checking the sky…</div>';
-  else if (cloud?.source === 'history') {
-    odds = `<div class="odds">${donut(cloud.clearPct)}<div><b>${cloud.clearPct}% chance of clear sky</b><br>
+function eventOdds(ev, w) {
+  if (!ev.cloud || !ev.time) return '';
+  const cloud = w.data?.events?.[ev.id];
+  if (w.status === 'loading') return '<div class="odds">Checking the sky…</div>';
+  if (cloud?.source === 'history') {
+    return `<div class="odds">${donut(cloud.clearPct)}<div><b>${cloud.clearPct}% chance of clear sky</b><br>
       At ${h(W.eventHour(ev.time))} on these dates over the last ${W.CLIMATE_YEARS} years, cloud averaged ${cloud.meanCover}%. The forecast takes over ${W.EVENT_FORECAST_DAYS} days before.</div></div>`;
-  } else if (cloud?.source === 'forecast') {
-    const layers = [['low', cloud.low], ['mid', cloud.mid], ['high', cloud.high]].filter(([, v]) => v !== null).map(([k, v]) => `${k} ${v}%`).join(', ');
-    odds = `<div class="odds">${donut(100 - cloud.cover)}<div><b>Forecast: ${cloud.cover}% cloud</b><br>At ${h(W.eventHour(ev.time))}${layers ? `, ${h(layers)}` : ''}.</div></div>`;
   }
-  return `<section class="section">
-    <div class="event">${orb(ev.name)}
-      <h4>${h(ev.name)}</h4>
-      <p class="when">${h(formatDate(ev.date, { withWeekday: true, withYear: true }))} at ${h(ev.time)} ${h(tzCity(trip.destination.timezone))} time</p>
-      <div class="count" data-count="${h(trip.id)}" data-kind="event">${eventCount(trip)}</div>
-      ${odds}
-    </div></section>`;
+  if (cloud?.source === 'forecast') {
+    const layers = [['low', cloud.low], ['mid', cloud.mid], ['high', cloud.high]].filter(([, v]) => v !== null).map(([k, v]) => `${k} ${v}%`).join(', ');
+    return `<div class="odds">${donut(100 - cloud.cover)}<div><b>Forecast: ${cloud.cover}% cloud</b><br>At ${h(W.eventHour(ev.time))}${layers ? `, ${h(layers)}` : ''}.</div></div>`;
+  }
+  return '';
+}
+
+function eventSlide(trip, ev, w, now) {
+  const tz = trip.destination.timezone;
+  const over = eventOver(ev, tz, now);
+  const when = `${formatDate(ev.date, { withWeekday: true, withYear: true })}${ev.time ? ` at ${ev.time} ${tzCity(tz)} time` : ', all day'}`;
+  return `<div class="event slide${over ? ' over' : ''}" role="group" aria-roledescription="event" aria-label="${h(ev.name)}">${orb(ev.kind)}
+    <h4>${h(ev.name)}</h4>
+    <p class="when">${h(when)}${ev.venue ? `<br>${h(ev.venue)}` : ''}</p>
+    <div class="count" data-count="${h(trip.id)}" data-kind="event" data-event="${h(ev.id)}">${eventCount(trip, ev, now)}</div>
+    ${over ? '' : eventOdds(ev, w)}
+    <div class="slide-actions">${ev.url ? `<a class="text-btn light" href="${h(ev.url)}" target="_blank" rel="noopener">${ev.source === 'ticketmaster' ? 'Tickets on Ticketmaster' : 'More details'}</a>` : ''}
+      <button class="text-btn light" data-action="edit-event" data-id="${h(trip.id)}" data-event="${h(ev.id)}">Edit</button></div>
+  </div>`;
+}
+
+function eventSection(trip) {
+  const now = new Date();
+  const events = sortEvents(tripEvents(trip), trip.destination.timezone, now);
+  const add = `<button class="btn secondary small" data-action="add-event" data-id="${h(trip.id)}">${ICONS.plus} Add event</button>`;
+  if (!events.length) {
+    return `<section class="section"><div class="section-head"><h3>Events</h3>${add}</div>
+      <p class="lede">Count down to something during the trip, like a concert, a fiesta or an eclipse.</p></section>`;
+  }
+  const w = weatherFor(trip);
+  const dots = events.length > 1
+    ? `<div class="dots" role="tablist">${events.map((ev, i) => `<button role="tab" aria-label="${h(ev.name)}" aria-selected="${i === 0}" data-dot="${i}"></button>`).join('')}</div>` : '';
+  return `<section class="section"><div class="section-head"><h3>${events.length === 1 ? 'Event' : `Events <span class="hint">(${events.length})</span>`}</h3>${add}</div>
+    <div class="carousel" data-carousel tabindex="0" aria-label="Events, swipe for more">${events.map((ev) => eventSlide(trip, ev, w, now)).join('')}</div>
+    ${dots}</section>`;
+}
+
+// Keep the dots in step with the swipe, and let a dot jump to its slide.
+function wireCarousels(root = document) {
+  root.querySelectorAll('[data-carousel]').forEach((track) => {
+    const dots = track.parentElement.querySelectorAll('[data-dot]');
+    if (!dots.length) return;
+    const current = () => Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+    const sync = () => { const i = current(); dots.forEach((d, j) => d.setAttribute('aria-selected', String(i === j))); };
+    track.addEventListener('scroll', () => requestAnimationFrame(sync), { passive: true });
+    dots.forEach((d) => d.addEventListener('click', () => track.scrollTo({ left: +d.dataset.dot * track.clientWidth, behavior: 'smooth' })));
+  });
 }
 
 function historySection(trip) {
@@ -443,6 +495,7 @@ function historySection(trip) {
 
 function renderTrip(id) {
   const trip = state.trips.find((t) => t.id === id);
+  const keepScroll = $('#main [data-carousel]')?.scrollLeft || 0;
   bar(`<a class="icon-btn" href="#/" aria-label="Back to all trips">${ICONS.back}</a><h1></h1>
     ${trip ? `<button class="icon-btn" data-action="edit" data-id="${h(id)}" aria-label="Edit trip">${ICONS.edit}</button>` : ''}`);
   if (!trip) { $('#main').innerHTML = `<section class="empty"><h2>This trip has gone</h2><p>It may have been deleted on the other phone.</p><a class="btn" href="#/">See all trips</a></section>`; return; }
@@ -462,6 +515,8 @@ function renderTrip(id) {
     ${historySection(trip)}
     <div class="danger-zone"><button class="text-btn danger" data-action="delete" data-id="${h(id)}">Delete this trip</button></div>
   </div>`;
+  const track = $('#main [data-carousel]');
+  if (track) { track.scrollLeft = keepScroll; wireCarousels($('#main')); track.dispatchEvent(new Event('scroll')); }
   drawMaps($('#main'));
 }
 
@@ -476,7 +531,7 @@ function render() {
 let chosenPlace = null;
 
 function tripForm(trip) {
-  const t = trip || { startDate: '', endDate: '', outbound: null, return: null, event: null, name: '' };
+  const t = trip || { startDate: '', endDate: '', outbound: null, return: null, name: '' };
   chosenPlace = trip ? trip.destination : null;
   const today = todayIn(HOME_TZ);
   const dlg = $('#dlg-trip');
@@ -496,15 +551,7 @@ function tripForm(trip) {
       ${flightFields('outbound', 'Flight out departs', t.outbound, HOME_TZ)}
       ${flightFields('return', 'Flight home departs', t.return, t.destination?.timezone || '')}
     </fieldset>
-    <fieldset><legend>Special event <span class="hint">(optional)</span></legend>
-      <label class="toggle"><input type="checkbox" name="hasEvent" ${t.event ? 'checked' : ''}> Count down to something during the trip</label>
-      <div data-event ${t.event ? '' : 'hidden'}>
-        <label>What is it<input name="eventName" maxlength="80" placeholder="Total solar eclipse" value="${h(t.event?.name)}"></label>
-        <div class="row"><label>Date<input type="date" name="eventDate" value="${h(t.event?.date)}"></label>
-        <label>Local time<input type="time" name="eventTime" value="${h(t.event?.time)}"></label></div>
-        <p class="hint" style="margin:0;font-size:14px">The time is local to the destination. Cloud cover is shown for that hour.</p>
-      </div>
-    </fieldset>
+    ${trip ? '' : '<p class="hint-text">You can add events, like a concert or an eclipse, once the trip is saved.</p>'}
     <ul class="errors" data-errors></ul>
     <div class="actions"><button type="button" class="btn secondary" data-close>Cancel</button><button class="btn" type="submit">${trip ? 'Save changes' : 'Add trip'}</button></div>
   </form>`;
@@ -566,13 +613,13 @@ function wireTripForm(dlg, trip) {
   bindPlace();
 
   const start = form.elements.startDate, end = form.elements.endDate;
-  // The event date follows the trip dates; flight dates fill in when tapped (lib/form.js).
+  // Flight dates fill in when tapped, then follow the trip dates (lib/form.js).
   let prev = { start: start.value, end: end.value };
   const follow = () => {
     const f = form.elements;
     const r = followTripDates({
       startDate: start.value, endDate: end.value,
-      outboundDate: f.outboundDate.value, returnDate: f.returnDate.value, eventDate: f.eventDate.value,
+      outboundDate: f.outboundDate.value, returnDate: f.returnDate.value,
     }, prev);
     for (const [k, v] of Object.entries(r.values)) f[k].value = v;
     for (const [k, lim] of Object.entries(r.limits)) Object.assign(f[k], lim);
@@ -592,7 +639,6 @@ function wireTripForm(dlg, trip) {
       form.elements[name].addEventListener('focus', fill);
     }
   }
-  form.elements.hasEvent.addEventListener('change', (e) => { form.querySelector('[data-event]').hidden = !e.target.checked; });
   form.querySelector('[data-close]').addEventListener('click', () => dlg.close());
 
   form.addEventListener('submit', async (e) => {
@@ -604,7 +650,7 @@ function wireTripForm(dlg, trip) {
       destination: chosenPlace || {},
       startDate: start.value, endDate: end.value,
       outbound: flight('outbound'), return: flight('return'),
-      event: f.hasEvent.checked ? { name: f.eventName.value, date: f.eventDate.value, time: f.eventTime.value } : null,
+      events: trip ? tripEvents(trip) : [],
     };
     const v = validateTrip(input);
     const errs = form.querySelector('[data-errors]');
@@ -623,6 +669,77 @@ function wireTripForm(dlg, trip) {
       errs.innerHTML = [err.message, ...(err.details || [])].map((x) => `<li>${h(x)}</li>`).join('');
     } finally { btn.disabled = false; }
   });
+}
+
+// ---------------------------------------------------------------- event form
+
+async function saveEvents(trip, events) {
+  const v = validateTrip({ ...trip, event: undefined, events });
+  if (!v.ok) throw Object.assign(new Error('Some details need fixing'), { details: v.errors });
+  const saved = await api().update(trip.id, v.trip);
+  state.trips = [...state.trips.filter((t) => t.id !== saved.id), saved];
+  writeJson(LS.trips, state.trips);
+  return saved;
+}
+
+function eventForm(trip, ev) {
+  const dlg = $('#dlg-event');
+  const e = ev || { name: '', date: trip.startDate, time: '', kind: '', cloud: null };
+  let kind = ev?.kind || '';      // '' means follow the name
+  let cloudTouched = !!ev;
+  dlg.innerHTML = `<form class="sheet" method="dialog" novalidate>
+    <h2 id="event-title">${ev ? 'Edit event' : 'New event'}</h2>
+    <label>What is it<input name="name" maxlength="80" placeholder="Total solar eclipse" value="${h(e.name)}" autocomplete="off"></label>
+    <div class="row"><label>Date<input type="date" name="date" value="${h(e.date)}" min="${h(trip.startDate)}" max="${h(trip.endDate)}"></label>
+    <label>Local time <span class="hint">(optional)</span><input type="time" name="time" value="${h(e.time)}"></label></div>
+    <p class="hint-text">The time is local to ${h(trip.destination.name)}. Leave it empty for something that lasts all day.</p>
+    <fieldset class="kinds"><legend>Picture</legend>
+      <div class="kind-grid">${KINDS.map((k) => `<label class="kind" title="${h(KIND_LABELS[k])}"><input type="radio" name="kind" value="${k}">${orb(k, 'kind-art')}<span>${h(KIND_LABELS[k])}</span></label>`).join('')}</div>
+    </fieldset>
+    <label class="toggle"><input type="checkbox" name="cloud"> Show the chance of a clear sky</label>
+    <p class="hint-text" data-cloud-hint></p>
+    <ul class="errors" data-errors></ul>
+    <div class="actions">${ev ? '<button type="button" class="text-btn danger" data-remove>Delete</button>' : ''}<button type="button" class="btn secondary" data-close>Cancel</button><button class="btn" type="submit">${ev ? 'Save' : 'Add event'}</button></div>
+  </form>`;
+  const form = dlg.querySelector('form');
+  const f = form.elements;
+  const showKind = () => { const k = kind || guessKind(f.name.value); form.querySelectorAll('[name=kind]').forEach((r) => { r.checked = r.value === k; }); return k; };
+  const showCloud = () => {
+    const k = showKind();
+    const timed = !!f.time.value;
+    f.cloud.disabled = !timed;
+    if (!timed) f.cloud.checked = false;
+    else if (!cloudTouched) f.cloud.checked = CLOUD_BY_DEFAULT.has(k);
+    form.querySelector('[data-cloud-hint]').textContent = timed ? 'From past years at that hour, then the forecast in the final fortnight.' : 'Needs a time.';
+  };
+  if (ev) f.cloud.checked = !!ev.cloud;
+  showCloud();
+  f.name.addEventListener('input', showCloud);
+  f.time.addEventListener('input', showCloud);
+  form.querySelectorAll('[name=kind]').forEach((r) => r.addEventListener('change', () => { kind = r.value; showCloud(); }));
+  f.cloud.addEventListener('change', () => { cloudTouched = true; });
+  form.querySelector('[data-close]').addEventListener('click', () => dlg.close());
+
+  const errs = form.querySelector('[data-errors]');
+  const run = async (btn, events) => {
+    btn.disabled = true;
+    try { await saveEvents(trip, events); dlg.close(); render(); }
+    catch (err) { errs.innerHTML = [err.message, ...(err.details || [])].map((x) => `<li>${h(x)}</li>`).join(''); }
+    finally { btn.disabled = false; }
+  };
+  form.querySelector('[data-remove]')?.addEventListener('click', (x) => {
+    if (!confirm(`Delete ${ev.name}? This removes it from both phones.`)) return;
+    run(x.target, tripEvents(trip).filter((o) => o.id !== ev.id));
+  });
+  form.addEventListener('submit', (x) => {
+    x.preventDefault();
+    const input = { ...(ev || {}), name: f.name.value, date: f.date.value, time: f.time.value, kind: showKind(), cloud: f.cloud.checked };
+    const r = cleanEvent(input);
+    if (r.errors.length) { errs.innerHTML = r.errors.map((m) => `<li>${h(m.replace(/^Event 1/, 'The event'))}</li>`).join(''); return; }
+    const list = tripEvents(trip);
+    run(form.querySelector('[type=submit]'), ev ? list.map((o) => (o.id === ev.id ? r.event : o)) : [...list, r.event]);
+  });
+  dlg.showModal();
 }
 
 // ---------------------------------------------------------------- confirm delete
@@ -700,6 +817,10 @@ document.addEventListener('click', (e) => {
   else if (act === 'settings') openSettings();
   else if (act === 'edit') tripForm(state.trips.find((t) => t.id === a.dataset.id));
   else if (act === 'delete') confirmDelete(a.dataset.id);
+  else if (act === 'add-event' || act === 'edit-event') {
+    const trip = state.trips.find((t) => t.id === a.dataset.id);
+    if (trip) eventForm(trip, act === 'edit-event' ? tripEvents(trip).find((e) => e.id === a.dataset.event) : null);
+  }
   else if (act === 'update' && swWaiting) swWaiting.postMessage('skip-waiting');
   else if (act === 'install-help') openInstallHelp();
   else if (act === 'install-later') { localStorage.setItem(LS.installHint, String(Date.now())); banner(); }

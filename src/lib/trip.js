@@ -2,6 +2,7 @@
 // Shared by the app and the Worker, so it must stay dependency-free.
 import { isValidDate, isValidTime, isValidTimeZone, daysBetween } from './time.js';
 import { tripStatus } from './countdown.js';
+import { cleanEvents } from './events.js';
 
 export const LIMITS = { name: 80, place: 120, maxTripDays: 366 };
 
@@ -55,16 +56,10 @@ export function validateTrip(input) {
   const outbound = cleanFlight(input.outbound, 'Outbound flight', errors);
   const ret = cleanFlight(input.return, 'Return flight', errors);
 
-  let event = null;
-  const e = input.event;
-  if (e && typeof e === 'object' && (e.name || e.date || e.time)) {
-    event = { name: str(e.name, LIMITS.name), date: str(e.date, 10), time: str(e.time, 5) };
-    if (!event.name) errors.push('Special event needs a name');
-    if (!isValidDate(event.date)) errors.push('Special event date is not a valid date');
-    if (!isValidTime(event.time)) errors.push('Special event time must be HH:MM');
-  }
+  const { events, errors: eventErrors } = cleanEvents(input);
+  errors.push(...eventErrors);
 
-  const trip = { name: str(input.name, LIMITS.name), destination, startDate, endDate, outbound, return: ret, event };
+  const trip = { name: str(input.name, LIMITS.name), destination, startDate, endDate, outbound, return: ret, events };
   return { ok: errors.length === 0, errors, trip };
 }
 
