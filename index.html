@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="app-version" content="0.1.5">
+<meta name="app-version" content="0.1.6">
 <title>Trip countdown</title>
 <meta name="description" content="Countdowns, maps and weather for our upcoming trips.">
 <meta name="theme-color" content="#F1EEFB" media="(prefers-color-scheme: light)">
@@ -230,6 +230,17 @@ button { cursor: pointer; }
 .kind .kind-art { width: 44px; height: 44px; }
 .kind:has(input:checked) { box-shadow: 0 0 0 3px var(--air-blue); background: #2E2670; }
 .kind:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+.head-actions { display: flex; gap: 6px; }
+.wide-only { display: none; }
+@media (min-width: 420px) { .wide-only { display: inline; } }
+#dlg-whats-on h3 { margin: 18px 0 6px; font-size: 18px; font-weight: 800; }
+.suggestions { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.suggestion { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.suggestion .kind-art { width: 44px; height: 44px; border-radius: 10px; background: #1F1A47; padding: 4px; box-sizing: border-box; }
+.suggestion small { color: var(--muted); }
+.suggestion a { font-size: 14px; }
+.hint-text.spaced { margin-top: 16px; }
+.attribution { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
 
 .chart { background: var(--surface); border-radius: 16px; padding: 12px 12px 8px; box-shadow: var(--shadow); }
 .chart svg { display: block; width: 100%; height: auto; }
@@ -331,9 +342,10 @@ textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, monosp
 <dialog id="dlg-confirm" aria-labelledby="confirm-title"></dialog>
 <dialog id="dlg-install" aria-labelledby="install-title"></dialog>
 <dialog id="dlg-event" aria-labelledby="event-title"></dialog>
+<dialog id="dlg-whats-on" aria-labelledby="whats-on-title"></dialog>
 <datalist id="tz-list"></datalist>
 
 <noscript>This app needs JavaScript turned on.</noscript>
-<script type="module" src="src/app.js?v=0.1.5"></script>
+<script type="module" src="src/app.js?v=0.1.6"></script>
 </body>
 </html>

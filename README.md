@@ -1,6 +1,6 @@
 # Trip countdown
 
-A shared holiday countdown for two phones. Every trip has a countdown, a map of the country with a pin, and the weather for each day of the stay. Trips can also have a special event, such as the 2 August 2027 total solar eclipse.
+A shared holiday countdown for two phones. Every trip has a countdown, a map of the country with a pin, and the weather for each day of the stay. Trips can also have any number of events, such as the 2 August 2027 total solar eclipse, shown in a swipeable carousel with their own countdowns. “What’s on” suggests public holidays, sky events (full moons, meteor shower peaks) and Ticketmaster listings for the trip’s place and dates.
 
 - **App:** static PWA (`index.html`, `src/`, `sw.js`) served by GitHub Pages.
 - **API:** Cloudflare Worker (`worker/`) with D1, plus a daily cron that saves forecasts.
@@ -15,7 +15,9 @@ A shared holiday countdown for two phones. Every trip has a countdown, a map of 
 | Map: whole country, or about 1,000 km around the pin for big countries; remote islands left out | `src/lib/geo.js` |
 | Weather per day: Forecast within 16 days, otherwise Average (10 years, ±3 days), shown as Outlook when the seasonal model covers that month | `src/lib/weather.js` |
 | Sea temperature: forecast within 8 days, otherwise typical for the same dates since 2022 | `src/lib/weather.js` |
+| Events: several per trip, each with a picture, an optional time (none means all day) and optional cloud odds | `src/lib/events.js` |
 | Event cloud cover: odds of clear sky at that hour from 10 years of history, forecast in the final 14 days | `src/lib/weather.js` |
+| What’s on: holidays from [Nager.Date](https://date.nager.at), full moons and meteor showers worked out locally, Ticketmaster within 30 km | `src/lib/whatson.js` |
 | Card colours follow the season at the destination (southern hemisphere flipped, tropics their own) | `src/lib/trip.js` |
 | Shared list, setup key check, forecast snapshots | `worker/src/index.js` |
 
@@ -55,6 +57,7 @@ The app is at `https://trips.slightlygood.app` (GitHub Pages, see `CNAME`) and t
 2. In the database's **Console** tab, paste and run `worker/migrations/0001_init.sql`.
 3. Workers & Pages: create a Worker by importing this GitHub repository. Worker name `trip-countdown-api`, root directory `worker`, deploy command `npx wrangler deploy`. It redeploys whenever `main` changes.
 4. Worker Settings, Variables and Secrets: add `SETUP_KEY` as a **Secret**, using a long random key from a password manager.
+   Optionally add `TICKETMASTER_API_KEY` as a **Secret** too (the Consumer Key from a free app at [developer.ticketmaster.com](https://developer.ticketmaster.com)). Without it, “What’s on” still shows holidays and sky events.
 5. Open `https://trips-api.slightlygood.app/api/health`; it should show `{"ok":true}`.
 
 ### Worker, database and setup key: from the command line instead
@@ -66,6 +69,7 @@ npx wrangler d1 create trip-countdown                      # paste the database_
 npx wrangler d1 migrations apply trip-countdown --remote   # creates the tables
 openssl rand -base64 32                                    # makes a setup key; keep it somewhere safe
 npx wrangler secret put SETUP_KEY                          # paste the key when asked
+npx wrangler secret put TICKETMASTER_API_KEY               # optional: Ticketmaster listings in "What’s on"
 npx wrangler deploy                                        # also creates the trips-api DNS record
 ```
 

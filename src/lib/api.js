@@ -43,5 +43,6 @@ export function createApi({ base, key, fetchImpl = (...a) => fetch(...a) }) {
     update: async (id, trip) => (await call('PUT', `/api/trips/${encodeURIComponent(id)}`, trip)).trip,
     remove: (id) => call('DELETE', `/api/trips/${encodeURIComponent(id)}`),
     snapshots: async (id) => (await call('GET', `/api/trips/${encodeURIComponent(id)}/snapshots`)).snapshots,
+    whatsOn: ({ lat, lon, cc, start, end }) => call('GET', `/api/whats-on?${new URLSearchParams({ lat, lon, cc: cc || '', start, end })}`),
   };
 }

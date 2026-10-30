@@ -1,6 +1,6 @@
 // Service worker: keeps the app shell and map data available offline.
 // API and weather requests always go to the network; the app caches those itself.
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 const SHELL = `trips-shell-${VERSION}`;
 const FONTS = 'trips-fonts';
 
@@ -19,6 +19,7 @@ const PRECACHE = [
   'src/lib/time.js',
   'src/lib/trip.js',
   'src/lib/weather.js',
+  'src/lib/whatson.js',
   'data/countries-10m.json',
   'icons/icon.svg',
   'icons/icon-192.png',

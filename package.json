@@ -1,6 +1,6 @@
 {
   "name": "trip-countdown",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Shared holiday countdown PWA with maps and weather, backed by a Cloudflare Worker and D1.",
   "type": "module",

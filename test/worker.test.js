@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { handle, safeEqual, allowedOrigin, tripsInForecastRange, snapshotForecasts } from '../worker/src/index.js';
+import worker, { handle, whatsOn, safeEqual, allowedOrigin, tripsInForecastRange, snapshotForecasts } from '../worker/src/index.js';
 import { createD1 } from './helpers/d1.js';
 import { nerja, fuengirola, dailyJson } from './helpers/fixtures.js';
 import { eachDay, addDays } from '../src/lib/time.js';
@@ -174,5 +174,60 @@ describe('daily forecast snapshots', () => {
     worker.scheduled({ scheduledTime: Date.parse('2026-10-27T05:17:00Z') }, env, { waitUntil: (p) => { waited = p; } });
     assert.ok(waited instanceof Promise);
     assert.deepEqual(await waited, { trips: 0, saved: 0, failures: [] });
+  });
+});
+
+describe('what’s on', () => {
+  const q = (o) => new URL(`https://api.test/api/whats-on?${new URLSearchParams({ lat: '36.54', lon: '-4.62', cc: 'ES', start: '2027-06-11', end: '2027-06-18', ...o })}`);
+  const fake = (routes) => async (u) => {
+    for (const [match, res] of routes) if (String(u).includes(match)) return typeof res === 'function' ? res(u) : res;
+    throw new Error(`unexpected fetch ${u}`);
+  };
+  const ok = (data) => new Response(JSON.stringify(data), { status: 200 });
+
+  test('needs the setup key like everything else', async () => {
+    assert.equal((await call('GET', '/api/whats-on', { key: null })).status, 401);
+  });
+
+  test('holidays come back; Ticketmaster is off until its key is set', async () => {
+    const f = fake([['date.nager.at', ok([{ date: '2027-06-12', name: 'Fiesta', localName: 'Fiesta', global: true, counties: null }])]]);
+    const r = await whatsOn(q(), env, f);
+    assert.deepEqual(r.holidays.map((x) => x.name), ['Fiesta']);
+    assert.deepEqual(r.ticketmaster, { enabled: false, events: [] });
+  });
+
+  test('with the key, Ticketmaster events come back and the key stays on the server', async () => {
+    env.TICKETMASTER_API_KEY = 'tm-secret';
+    let asked = '';
+    const f = fake([
+      ['date.nager.at', ok([])],
+      ['ticketmaster.com', (u) => { asked = String(u); return ok({ _embedded: { events: [{ id: 'x', name: 'Gig', url: 'https://t.example/x', dates: { start: { localDate: '2027-06-12', localTime: '21:00:00' } }, classifications: [{ segment: { name: 'Music' } }] }] } }); }],
+    ]);
+    const res = await handle(req('GET', q().pathname + q().search), env, f);
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.deepEqual(body.ticketmaster.events.map((e) => e.name), ['Gig']);
+    assert.match(asked, /apikey=tm-secret/);
+    assert.ok(!JSON.stringify(body).includes('tm-secret'));
+  });
+
+  test('one source failing doesn’t take the other with it', async () => {
+    env.TICKETMASTER_API_KEY = 'bad';
+    const r = await whatsOn(q(), env, fake([['date.nager.at', new Response('', { status: 500 })], ['ticketmaster.com', new Response('', { status: 401 })]]));
+    assert.equal(r.holidays, null);
+    assert.equal(r.ticketmaster.enabled, true);
+    assert.match(r.ticketmaster.error, /key/);
+  });
+
+  test('countries Nager.Date doesn’t cover give no holidays rather than an error', async () => {
+    const r = await whatsOn(q({ cc: 'AQ' }), env, fake([['date.nager.at', new Response(null, { status: 404 })]]));
+    assert.deepEqual(r.holidays, []);
+  });
+
+  test('bad requests are refused', async () => {
+    assert.ok((await whatsOn(q({ lat: 'x' }), env, fake([]))).error);
+    assert.ok((await whatsOn(q({ end: '2027-06-01' }), env, fake([]))).error);
+    assert.ok((await whatsOn(q({ end: '2029-06-01' }), env, fake([]))).error);
+    assert.equal((await call('GET', '/api/whats-on?lat=x')).status, 400);
   });
 });

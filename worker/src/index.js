@@ -2,7 +2,8 @@
 // Also runs the daily cron that snapshots forecasts for trips in range.
 import { validateTrip } from '../../src/lib/trip.js';
 import { forecastUrl, parseDaily, FORECAST_DAYS } from '../../src/lib/weather.js';
-import { addDays, eachDay } from '../../src/lib/time.js';
+import { addDays, eachDay, isValidDate } from '../../src/lib/time.js';
+import { holidaysUrl, tripYears, parseHolidays, ticketmasterUrl, parseTicketmaster } from '../../src/lib/whatson.js';
 
 const KEY_HEADER = 'X-Setup-Key';
 const MAX_BODY = 32 * 1024;
@@ -53,6 +54,48 @@ async function readBody(request) {
 
 const rowToTrip = (row) => ({ ...JSON.parse(row.data), id: row.id, createdAt: row.created_at, updatedAt: row.updated_at });
 
+// ---------------------------------------------------------------- what's on
+
+const WHATS_ON_MAX_DAYS = 400;
+
+/**
+ * Holidays and Ticketmaster listings for a place and dates. Each part fails on its own,
+ * so a Ticketmaster outage still leaves the holidays. Ticketmaster stays off until
+ * TICKETMASTER_API_KEY is set as a Worker secret.
+ */
+export async function whatsOn(url, env, fetchImpl = fetch) {
+  const p = url.searchParams;
+  const lat = Number(p.get('lat')), lon = Number(p.get('lon'));
+  const cc = String(p.get('cc') || '').toUpperCase(), start = p.get('start') || '', end = p.get('end') || '';
+  if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lon) || Math.abs(lon) > 180) return { error: 'lat and lon are needed' };
+  if (!isValidDate(start) || !isValidDate(end) || end < start) return { error: 'start and end dates are needed' };
+  if (eachDay(start, end).length > WHATS_ON_MAX_DAYS) return { error: 'That date range is too long' };
+
+  const cached = (u, ttl) => fetchImpl(u, { cf: { cacheTtl: ttl, cacheEverything: true } });
+  const holidays = /^[A-Z]{2}$/.test(cc)
+    ? Promise.all(tripYears(start, end).map(async (y) => {
+      const res = await cached(holidaysUrl(y, cc), 86400);
+      if (res.status === 204 || res.status === 404) return []; // country not covered
+      if (!res.ok) throw new Error(`holidays ${res.status}`);
+      return res.json();
+    })).then((lists) => parseHolidays(lists, start, end)).catch(() => null)
+    : Promise.resolve([]);
+
+  const key = env.TICKETMASTER_API_KEY;
+  const tm = key
+    ? cached(ticketmasterUrl({ lat, lon, start, end, apiKey: key }), 6 * 3600)
+      .then(async (res) => {
+        if (res.status === 401 || res.status === 403) return { enabled: true, events: [], error: 'The Ticketmaster key wasn’t accepted' };
+        if (!res.ok) return { enabled: true, events: [], error: 'Ticketmaster didn’t answer' };
+        return { enabled: true, events: parseTicketmaster(await res.json(), start, end) };
+      })
+      .catch(() => ({ enabled: true, events: [], error: 'Ticketmaster didn’t answer' }))
+    : Promise.resolve({ enabled: false, events: [] });
+
+  const [h, t] = await Promise.all([holidays, tm]);
+  return { holidays: h, ticketmaster: t };
+}
+
 // ---------------------------------------------------------------- routes
 
 async function listTrips(env) {
@@ -65,7 +108,7 @@ async function getTrip(env, id) {
   return row ? rowToTrip(row) : null;
 }
 
-export async function handle(request, env) {
+export async function handle(request, env, fetchImpl = fetch) {
   const url = new URL(request.url);
   const cors = corsHeaders(request, env);
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
@@ -75,6 +118,11 @@ export async function handle(request, env) {
 
   if (!env.SETUP_KEY) return json({ error: 'The server has no setup key configured' }, 503, cors);
   if (!safeEqual(request.headers.get(KEY_HEADER) || '', env.SETUP_KEY)) return json({ error: 'Setup key not accepted' }, 401, cors);
+
+  if (url.pathname === '/api/whats-on' && request.method === 'GET') {
+    const r = await whatsOn(url, env, fetchImpl);
+    return json(r, r.error ? 400 : 200, cors);
+  }
 
   const parts = url.pathname.replace(/\/+$/, '').split('/').slice(2); // ['trips', id?, 'snapshots'?]
   if (parts[0] !== 'trips' || parts.length > 3) return json({ error: 'Not found' }, 404, cors);
