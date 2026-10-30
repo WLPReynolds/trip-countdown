@@ -8,9 +8,10 @@ import { decodeTopology, chooseView, renderMap } from './lib/geo.js';
 import { historySeries, linePaths } from './lib/chart.js';
 import { iosInstallState, hintBannerDue } from './lib/install.js';
 import { followTripDates, flightFromForm, flightDateOnTap } from './lib/form.js';
+import { skyEvents, searchLink } from './lib/whatson.js';
 import { KINDS, KIND_LABELS, CLOUD_BY_DEFAULT, guessKind, cleanEvent, tripEvents, sortEvents, nextEvent, eventStart, eventOver } from './lib/events.js';
 
-export const APP_VERSION = '0.1.5';
+export const APP_VERSION = '0.1.6';
 
 // The Worker's address (a Cloudflare custom domain, see worker/wrangler.toml).
 const DEFAULT_API_BASE = 'https://trips-api.slightlygood.app';
@@ -441,10 +442,10 @@ function eventSlide(trip, ev, w, now) {
 function eventSection(trip) {
   const now = new Date();
   const events = sortEvents(tripEvents(trip), trip.destination.timezone, now);
-  const add = `<button class="btn secondary small" data-action="add-event" data-id="${h(trip.id)}">${ICONS.plus} Add event</button>`;
+  const add = `<span class="head-actions"><button class="btn secondary small" data-action="whats-on" data-id="${h(trip.id)}">What’s on</button><button class="btn secondary small" data-action="add-event" data-id="${h(trip.id)}" aria-label="Add event">${ICONS.plus}<span class="wide-only">Add</span></button></span>`;
   if (!events.length) {
     return `<section class="section"><div class="section-head"><h3>Events</h3>${add}</div>
-      <p class="lede">Count down to something during the trip, like a concert, a fiesta or an eclipse.</p></section>`;
+      <p class="lede">Count down to something during the trip, like a concert, a fiesta or an eclipse. “What’s on” finds holidays, sky events and listings for these dates.</p></section>`;
   }
   const w = weatherFor(trip);
   const dots = events.length > 1
@@ -742,6 +743,86 @@ function eventForm(trip, ev) {
   dlg.showModal();
 }
 
+// ---------------------------------------------------------------- what's on
+
+const whatsOnCache = new Map(); // trip place + dates → server answer
+
+/** Has this suggestion already been added to the trip? */
+function alreadyAdded(trip, s) {
+  return tripEvents(trip).some((e) => (s.ref && e.ref === s.ref) || (e.date === s.date && e.name.toLowerCase() === s.name.toLowerCase()));
+}
+
+function suggestionRow(trip, s, i, detail) {
+  const added = alreadyAdded(trip, s);
+  const when = `${formatDate(s.date, { withWeekday: true })}${s.time ? `, ${s.time}` : ''}`;
+  return `<li class="suggestion">${orb(s.kind, 'kind-art')}
+    <div><b>${h(s.name)}</b><br><small>${h(when)}${detail ? ` · ${h(detail)}` : ''}</small>${s.url ? `<br><a href="${h(s.url)}" target="_blank" rel="noopener">Details</a>` : ''}</div>
+    <button type="button" class="btn small${added ? ' secondary' : ''}" data-suggest="${i}" ${added ? 'disabled' : ''}>${added ? 'Added' : 'Add'}</button></li>`;
+}
+
+function openWhatsOn(tripId) {
+  const dlg = $('#dlg-whats-on');
+  const d = () => state.trips.find((t) => t.id === tripId);
+  const trip = d();
+  if (!trip) return;
+  const place = trip.destination;
+  const cacheKey = [place.lat, place.lon, place.countryCode, trip.startDate, trip.endDate].join('|');
+  const sky = skyEvents({ start: trip.startDate, end: trip.endDate, lat: place.lat, tz: place.timezone }).map((x) => ({ ...x, source: 'sky' }));
+  let suggestions = [];
+
+  const draw = (server, loading) => {
+    const t = d() || trip;
+    suggestions = [];
+    const group = (title, items, detail, empty) => {
+      if (!items) return '';
+      const rows = items.map((s) => { suggestions.push(s); return suggestionRow(t, s, suggestions.length - 1, detail(s)); }).join('');
+      return `<h3>${h(title)}</h3>${rows ? `<ul class="suggestions">${rows}</ul>` : `<p class="hint-text">${h(empty)}</p>`}`;
+    };
+    const holidays = server?.holidays?.map((x) => ({ name: x.name, date: x.date, time: '', kind: 'holiday', source: 'holiday', regional: x.regional, localName: x.localName, regions: x.regions }));
+    const tm = server?.ticketmaster;
+    dlg.innerHTML = `<form class="sheet" method="dialog">
+      <h2 id="whats-on-title">What’s on in ${h(place.name)}</h2>
+      <p class="hint-text">${h(formatRange(t.startDate, t.endDate))}. Tap Add to put something in the trip’s events, on both phones.</p>
+      ${loading ? '<p class="hint-text">Looking for holidays and listings…</p>' : ''}
+      ${server?.failed ? '<p class="hint-text">Holidays and listings couldn’t be loaded. Check you’re online and try again.</p>' : ''}
+      ${group('Public holidays', holidays, (x) => [x.localName, x.regional ? `regional${x.regions.length ? ` (${x.regions.map((r) => r.split('-').pop()).join(', ')})` : ''}, may not apply here` : ''].filter(Boolean).join(' · '), 'No public holidays on these dates.')}
+      ${group('In the sky', sky, (x) => x.note, 'No full moon or meteor shower peak on these dates.')}
+      ${tm?.enabled ? group('Ticketmaster', tm.events, (x) => x.venue, tm.error || 'Nothing listed within 30 km yet. Big events are often announced a few months ahead.') : ''}
+      ${tm && !tm.enabled ? '<p class="hint-text spaced">Ticketmaster listings will appear here once its key is added to the server.</p>' : ''}
+      <h3>Anything else</h3>
+      <p class="hint-text">Local fiestas and smaller events often aren’t listed anywhere central. <a href="${h(searchLink(place.name, t.startDate, t.endDate, formatRange))}" target="_blank" rel="noopener">Search the web for what’s on</a>, then add anything you find with Add event.</p>
+      ${tm?.enabled && tm.events?.length ? '<p class="attribution">Event listings from Ticketmaster.</p>' : ''}
+      <div class="actions"><button class="btn">Done</button></div>
+    </form>`;
+  };
+
+  dlg.onclick = async (e) => {
+    const b = e.target.closest('[data-suggest]');
+    if (!b) return;
+    const s = suggestions[+b.dataset.suggest];
+    const t = d();
+    if (!s || !t || alreadyAdded(t, s)) return;
+    b.disabled = true; b.textContent = 'Adding…';
+    const r = cleanEvent({ name: s.name, date: s.date, time: s.time, kind: s.kind, source: s.source, url: s.url, venue: s.venue, ref: s.ref });
+    try { await saveEvents(t, [...tripEvents(t), r.event]); render(); draw(whatsOnCache.get(cacheKey)); }
+    catch (err) { b.disabled = false; b.textContent = 'Try again'; toastMsg(err.message); }
+  };
+
+  const hit = whatsOnCache.get(cacheKey);
+  draw(hit, !hit);
+  dlg.showModal();
+  if (hit) return;
+  api().whatsOn({ lat: place.lat, lon: place.lon, cc: place.countryCode, start: trip.startDate, end: trip.endDate })
+    .then((r) => { whatsOnCache.set(cacheKey, r); return r; })
+    .catch(() => ({ failed: true }))
+    .then((r) => { if (dlg.open) draw(r); });
+}
+
+function toastMsg(text) {
+  const el = $('#dlg-whats-on [data-toast]') || $('#dlg-whats-on form');
+  el?.insertAdjacentHTML('afterbegin', `<p class="errors" role="status">${h(text)}</p>`);
+}
+
 // ---------------------------------------------------------------- confirm delete
 
 function confirmDelete(id) {
@@ -817,6 +898,7 @@ document.addEventListener('click', (e) => {
   else if (act === 'settings') openSettings();
   else if (act === 'edit') tripForm(state.trips.find((t) => t.id === a.dataset.id));
   else if (act === 'delete') confirmDelete(a.dataset.id);
+  else if (act === 'whats-on') openWhatsOn(a.dataset.id);
   else if (act === 'add-event' || act === 'edit-event') {
     const trip = state.trips.find((t) => t.id === a.dataset.id);
     if (trip) eventForm(trip, act === 'edit-event' ? tripEvents(trip).find((e) => e.id === a.dataset.event) : null);
